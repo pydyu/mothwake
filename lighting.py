@@ -1,7 +1,7 @@
 import pygame
 
 
-# Light intensity shared by the player, lanterns, bee, and solar effects.
+# light intensity shared by the player, lanterns, bee, and solar effects.
 
 LIGHT_BRIGHTNESS = 2.0
 
@@ -22,7 +22,7 @@ class LightingEngine:
         visibility_loss = min(45, deployed_moths * 5)
         for radius, alpha in ((128, 234), (103, 208), (79, 160), (55, 82), (32, 18)):
             pygame.draw.circle(self.darkness, (3, 2, 10, light_alpha(alpha)), (x, y), max(12, radius - visibility_loss))
-        # Placed lanterns use the same soft concentric falloff as the player,
+        # placed lanterns have the same falloff thing of the player
         # only at a smaller radius.
         for lantern_position in lantern_positions or []:
             for radius, alpha in ((48, 238), (38, 205), (28, 145), (17, 52)):
@@ -40,7 +40,7 @@ class LightingEngine:
                 pygame.draw.circle(self.darkness, (8, 5, 8, light_alpha(alpha)), bee_position, radius)
         surface.blit(self.darkness, (0, 0))
 
-        # Add a restrained golden tint inside the player's lantern light.
+        #  golden tint inside the player's lantern light.
         self.player_glow.fill((0, 0, 0, 0))
         for radius, color in (
             (80, (20, 16, 6, 0)),
