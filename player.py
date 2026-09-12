@@ -13,7 +13,7 @@ from settings import (
     PLAYER_SCALE_WIDTH
 )
 
-PLAYER_ANIMATION_FPS = 13
+PLAYER_ANIMATION_FPS = 10
 PLAYER_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "player"
 
 
@@ -24,6 +24,7 @@ class Player:
         self.grounded = False
         self.spawn = spawn
         self.health = 100
+        self.lives = 3
         self.coins = 0
         self.moth_stunned_until = 0
         self.frames_right = [
