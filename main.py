@@ -427,7 +427,7 @@ def main() -> None:
 
 
     # search this up to find level index var
-    level_index = 9
+    level_index = 0
     play_music(BOSS_MUSIC_PATH if level_index == 9 else SOUNDTRACK_PATH, fade_ms=0)
     checkpoint_index = 0
     level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
