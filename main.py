@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pygame
 
-from entities import ATTACKS, ENEMY_COIN_REWARDS, Bee, Cricket, MerchantFly, MothSwarm, QueenBee, ShrineLight
+from entities import ATTACKS, ENEMY_COIN_REWARDS, Bee, Cricket, FireAnt, Hornet, MerchantFly, MothSwarm, QueenBee, ShrineLight
 from level import Level
 from level_data import LEVELS
 from lighting import LightingEngine
@@ -11,6 +11,7 @@ from settings import BACKGROUND_COLOR, FPS, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_CO
 
 
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "VCR_OSD_MONO_1.001.ttf"
+MERCHANT_PRICES = {"lantern": 2, "extra_life": 6, "tier_2": 4, "tier_3": 7, "tier_4": 12}
 
 
 def merchant_buttons() -> dict[str, pygame.Rect]:
@@ -19,29 +20,36 @@ def merchant_buttons() -> dict[str, pygame.Rect]:
         "tier_2": pygame.Rect(625, 354, 280, 38),
         "tier_3": pygame.Rect(625, 398, 280, 38),
         "tier_4": pygame.Rect(625, 442, 280, 38),
+        "extra_life": pygame.Rect(625, 486, 280, 38),
     }
 
 
+def merchant_panel() -> pygame.Rect:
+    return pygame.Rect(605, 258, 320, 286)
+
+
 def draw_merchant(screen: pygame.Surface, font: pygame.font.Font, player: Player, moths: MothSwarm) -> None:
-    panel = pygame.Rect(605, 258, 320, 242)
+    panel = merchant_panel()
     pygame.draw.rect(screen, (20, 18, 29), panel, border_radius=8)
     pygame.draw.rect(screen, (184, 145, 72), panel, 2, border_radius=8)
     screen.blit(font.render(f"MERCHANT   COINS: {player.coins}", True, (245, 211, 128)), (panel.x + 18, panel.y + 16))
     labels = {
-        "lantern": "LANTERN                 1",
-        "tier_2": "UNLOCK SWARM BURST     3",
-        "tier_3": "UNLOCK SOLAR SWARM     5",
-        "tier_4": "UNLOCK ECLIPSE         10",
+        "lantern": "LANTERN                 2",
+        "tier_2": "UNLOCK SWARM BURST     4",
+        "tier_3": "UNLOCK SOLAR SWARM     7",
+        "tier_4": "UNLOCK ECLIPSE         12",
+        "extra_life": "EXTRA LIFE              6",
     }
     for key, rect in merchant_buttons().items():
         tier = int(key[-1]) if key.startswith("tier_") else 0
         owned = tier and moths.unlocked_tier >= tier
-        available = not tier or tier == moths.unlocked_tier + 1
+        life_full = key == "extra_life" and player.lives >= 3
+        available = (not tier or tier == moths.unlocked_tier + 1) and not life_full
         fill = (45, 40, 53) if available and not owned else (29, 27, 36)
         text_color = (235, 232, 219) if available and not owned else (105, 101, 115)
         pygame.draw.rect(screen, fill, rect, border_radius=5)
         pygame.draw.rect(screen, (91, 86, 108), rect, 1, border_radius=5)
-        label = "OWNED" if owned else labels[key]
+        label = "LIVES FULL" if life_full else "OWNED" if owned else labels[key]
         screen.blit(font.render(label, True, text_color), (rect.x + 12, rect.y + 10))
 
 
@@ -97,7 +105,53 @@ def create_bees(level: Level) -> list[Bee]:
         Cricket(position, find_platform_section(level, position))
         for position in level.cricket_spawns
     )
+    bees.extend(
+        FireAnt(position, find_platform_section(level, position))
+        for position in level.fire_ant_spawns
+    )
+    bees.extend(
+        Hornet(position, find_platform_section(level, position))
+        for position in level.hornet_spawns
+    )
     return bees
+
+
+def spawn_hornet_wave(level: Level, wave: int, now: int) -> list[Bee]:
+    if wave == 0:
+        positions = ((220, 220), (480, 255), (740, 220))
+        enemies = [Bee(position, find_bee_platform(level, position), True) for position in positions]
+    elif wave == 1:
+        positions = ((165, 235), (745, 235))
+        enemies = [Cricket(position, find_platform_section(level, position)) for position in positions]
+        for cricket in enemies:
+            cricket.activate_lantern()
+    else:
+        positions = ((300, 330), (660, 330))
+        enemies = [FireAnt(position, find_platform_section(level, position)) for position in positions]
+        for fire_ant in enemies:
+            fire_ant.drops_fire = False
+    for enemy in enemies:
+        enemy.next_attack_at = now + 900
+    return enemies
+
+
+def restart_button() -> pygame.Rect:
+    return pygame.Rect(SCREEN_WIDTH // 2 - 105, SCREEN_HEIGHT // 2 + 58, 210, 52)
+
+
+def draw_win_screen(screen: pygame.Surface, font: pygame.font.Font, alert_font: pygame.font.Font) -> None:
+    veil = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    veil.fill((5, 4, 10, 225))
+    screen.blit(veil, (0, 0))
+    title = alert_font.render("YOU WIN!", True, (250, 201, 62))
+    screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 45)))
+    subtitle = font.render("THE HORNET HAS FALLEN", True, TEXT_COLOR)
+    screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 5)))
+    button = restart_button()
+    pygame.draw.rect(screen, (38, 34, 48), button, border_radius=7)
+    pygame.draw.rect(screen, (250, 201, 62), button, 2, border_radius=7)
+    label = font.render("RESTART", True, TEXT_COLOR)
+    screen.blit(label, label.get_rect(center=button.center))
 
 
 def draw_ui(screen: pygame.Surface, font: pygame.font.Font, alert_font: pygame.font.Font, player: Player, moths: MothSwarm, shrine_lights: int, bees: list[Bee], level_index: int, level_title_until: int, now: int, message: str) -> None:
@@ -125,7 +179,7 @@ def draw_ui(screen: pygame.Surface, font: pygame.font.Font, alert_font: pygame.f
         boss_panel = pygame.Rect(300, 14, SCREEN_WIDTH - 314, 54)
         pygame.draw.rect(screen, panel_color, boss_panel, border_radius=7)
         pygame.draw.rect(screen, accent_color, boss_panel, 2, border_radius=7)
-        title = font.render("QUEEN BEE", True, accent_color)
+        title = font.render(boss.name, True, accent_color)
         screen.blit(title, (boss_panel.x + 14, boss_panel.y + 8))
         boss_hp = font.render(f"{boss.health}/{boss.max_health}", True, TEXT_COLOR)
         screen.blit(boss_hp, (boss_panel.right - boss_hp.get_width() - 14, boss_panel.y + 8))
@@ -219,14 +273,21 @@ def draw_ui(screen: pygame.Surface, font: pygame.font.Font, alert_font: pygame.f
         health_fill = health_back.copy()
         health_fill.width = round(health_back.width * bee.health / bee.max_health)
         pygame.draw.rect(screen, (226, 170, 47), health_fill, border_radius=4)
-        if bee.is_boss:
+        if bee.is_hornet:
+            screen.blit(font.render("NEEDLE VOLLEY  -12 HP", True, TEXT_COLOR), (panel.x + 14, panel.y + 61))
+            screen.blit(font.render("HORNET DIVE  -8 HP", True, muted_color), (panel.x + 14, panel.y + 87))
+            screen.blit(font.render("CLEAR WAVES TO ATTACK", True, muted_color), (panel.x + 14, panel.y + 113))
+        elif bee.is_boss:
             screen.blit(font.render("ROYAL BLAST  -10 HP", True, TEXT_COLOR), (panel.x + 14, panel.y + 61))
             screen.blit(font.render("WING GUST  -6 HP", True, muted_color), (panel.x + 14, panel.y + 87))
             screen.blit(font.render("QUEEN SHOCK  PARALYSIS", True, muted_color), (panel.x + 14, panel.y + 113))
         elif bee.is_cricket:
-            screen.blit(font.render("SONIC CHIRP  -18 HP", True, TEXT_COLOR), (panel.x + 14, panel.y + 61))
+            screen.blit(font.render("SONIC CHIRP  -10 HP", True, TEXT_COLOR), (panel.x + 14, panel.y + 61))
             screen.blit(font.render("LANTERN BREAKS SHIELD", True, muted_color), (panel.x + 14, panel.y + 87))
             screen.blit(font.render("LANTERN: ANY PLATFORM SPOT", True, muted_color), (panel.x + 14, panel.y + 113))
+        elif bee.is_fire_ant:
+            screen.blit(font.render("FIRE ATTACK  -15 HP", True, TEXT_COLOR), (panel.x + 14, panel.y + 61))
+            screen.blit(font.render("LEAVES BURNING GROUND", True, muted_color), (panel.x + 14, panel.y + 87))
         else:
             screen.blit(font.render("STING  -1/-2 MOTHS", True, TEXT_COLOR), (panel.x + 14, panel.y + 61))
             screen.blit(font.render("PARALYSIS  25% FAIL", True, muted_color), (panel.x + 14, panel.y + 87))
@@ -249,9 +310,11 @@ def main() -> None:
     pygame.display.set_caption(WINDOW_TITLE)
     clock = pygame.time.Clock()
 
-    level_index = 4
+
+    # current level index variable so just search this comment to find it
+    level_index = 8
     checkpoint_index = 0
-    level = Level(LEVELS[level_index])
+    level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
     player = Player(level.player_spawn)
     moths = MothSwarm()
     bees = create_bees(level)
@@ -261,7 +324,16 @@ def main() -> None:
     shrine_objects: list[ShrineLight] = []
     merchant: MerchantFly | None = None
     merchant_spawned = False
-    shrine_lights = 3
+    merchant_visited = False
+    moth_restore_started_at: int | None = None
+    moth_restore_used = False
+    final_merchant_rewarded = False
+    hornet_phase = "intro" if level_index == 9 else ""
+    hornet_wave = 0
+    hornet_intro_started = pygame.time.get_ticks()
+    hornet_intro_until = hornet_intro_started + 3600 if hornet_phase else 0
+    game_won = False
+    shrine_lights = 5
     message = ""
     message_until = 0
     font = pygame.font.Font(str(FONT_PATH), 16)
@@ -282,6 +354,29 @@ def main() -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and game_won:
+                if event.button == 1 and restart_button().collidepoint(event.pos):
+                    level_index = 0
+                    checkpoint_index = 0
+                    level = Level(LEVELS[level_index], use_green_terrain=False)
+                    player = Player(level.player_spawn)
+                    moths = MothSwarm()
+                    bees = create_bees(level)
+                    shrine_objects.clear()
+                    merchant = None
+                    merchant_spawned = False
+                    merchant_visited = False
+                    moth_restore_started_at = None
+                    moth_restore_used = False
+                    final_merchant_rewarded = False
+                    shrine_lights = 5
+                    hornet_phase = ""
+                    hornet_wave = 0
+                    game_won = False
+                    transition_phase = "in"
+                    transition_started = now
+                    level_title_until = 0
+                    message = ""
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
@@ -312,7 +407,11 @@ def main() -> None:
                             moths.summon(player.rect.center)
                 elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
                     tier = event.key - pygame.K_0
-                    living_bees = [bee for bee in bees if bee.alive]
+                    all_living_enemies = [bee for bee in bees if bee.alive]
+                    living_bees = [
+                        bee for bee in all_living_enemies
+                        if not getattr(bee, "attack_locked", False)
+                    ] or all_living_enemies
                     closest_bee = min(
                         living_bees,
                         key=lambda bee: bee.position.distance_to(player.rect.center),
@@ -331,32 +430,51 @@ def main() -> None:
                     )
                     if clicked_item == "lantern":
                         handled = True
-                        if player.coins >= 1:
-                            player.coins -= 1
+                        if player.coins >= MERCHANT_PRICES["lantern"]:
+                            player.coins -= MERCHANT_PRICES["lantern"]
                             shrine_lights += 1
                             message = "LANTERN +1"
                         else:
                             message = "NOT ENOUGH COINS"
+                    elif clicked_item == "extra_life":
+                        handled = True
+                        if player.lives >= 3:
+                            message = "LIVES FULL"
+                        elif player.coins < MERCHANT_PRICES["extra_life"]:
+                            message = "NOT ENOUGH COINS"
+                        else:
+                            player.coins -= MERCHANT_PRICES["extra_life"]
+                            player.lives += 1
+                            message = "EXTRA LIFE BOUGHT"
                     elif clicked_item and clicked_item.startswith("tier_"):
                         handled = True
                         tier = int(clicked_item[-1])
-                        costs = {2: 3, 3: 5, 4: 10}
+                        cost = MERCHANT_PRICES[clicked_item]
                         if moths.unlocked_tier >= tier:
                             message = "ALREADY OWNED"
                         elif tier != moths.unlocked_tier + 1:
                             message = "BUY PREVIOUS TIER"
-                        elif player.coins < costs[tier]:
+                        elif player.coins < cost:
                             message = "NOT ENOUGH COINS"
                         else:
-                            player.coins -= costs[tier]
+                            player.coins -= cost
                             moths.unlocked_tier = tier
                             message = f"TIER {tier} UNLOCKED"
                     if handled:
                         message_until = now + 1300
+                    elif not merchant_panel().collidepoint(event.pos):
+                        merchant.open = False
+                        handled = True
 
                 world_click = camera.screen_to_world(event.pos)
                 if not handled and merchant is not None and merchant.handle_click(world_click):
                     handled = True
+                    if level_index == 8 and not final_merchant_rewarded:
+                        player.lives += 1
+                        final_merchant_rewarded = True
+                        message = "MERCHANT: CONGRATS ON MAKING IT THIS FAR! +1 LIFE"
+                        message_until = now + 2800
+                    merchant_visited = True
                 if not handled:
                     clicked_bee = next(
                         (bee for bee in reversed(bees) if bee.alive and bee.rect.collidepoint(world_click)),
@@ -371,11 +489,40 @@ def main() -> None:
         )
         player.update(dt, move_direction, jump_requested, level.solids)
         camera.update(dt, player, move_direction)
+        can_restore_moths = (
+            level_index == 8
+            and merchant is not None
+            and merchant.arrived
+            and not moth_restore_used
+            and pygame.Vector2(player.rect.center).distance_to(merchant.position) < 125
+        )
+        if can_restore_moths and keys[pygame.K_p]:
+            if moth_restore_started_at is None:
+                moth_restore_started_at = now
+            restore_progress = min(1.0, (now - moth_restore_started_at) / 1800)
+            message = f"RESTORING MOTHS {round(restore_progress * 100)}%"
+            message_until = now + 120
+            if restore_progress >= 1.0:
+                moths.restore_full(player.rect.center)
+                moth_restore_used = True
+                moth_restore_started_at = None
+                message = "MOTHS RESTORED 32/32"
+                message_until = now + 1800
+        else:
+            moth_restore_started_at = None
         moths.update(now)
+        living_crickets = [enemy for enemy in bees if isinstance(enemy, Cricket) and enemy.alive]
+        active_cricket = min(
+            living_crickets,
+            key=lambda cricket: cricket.position.distance_to(player.rect.center),
+            default=None,
+        )
+        for cricket in living_crickets:
+            cricket.attack_enabled = cricket is active_cricket
         for bee in bees:
             bee.update(now, player, moths, dt)
             if bee.defeated_by_player and not bee.coin_awarded:
-                reward_name = "Queen Bee" if bee.is_boss else "Bee"
+                reward_name = "Hornet" if bee.is_hornet else "Queen Bee" if bee.is_boss else "Cricket" if bee.is_cricket else "Fire Ant" if bee.is_fire_ant else "Bee"
                 reward = ENEMY_COIN_REWARDS[reward_name]
                 player.coins += reward
                 bee.coin_awarded = True
@@ -402,16 +549,53 @@ def main() -> None:
                     living_minions += 1
                 queen.summons_pending = 0
 
-        area_clear = bool(bees) and not any(bee.alive for bee in bees)
-        if level_index == 2 and area_clear and not merchant_spawned:
+        hornet = next((enemy for enemy in bees if isinstance(enemy, Hornet)), None)
+        if hornet is not None and not game_won:
+            if hornet_phase == "intro" and now >= hornet_intro_until:
+                bees.extend(spawn_hornet_wave(level, 0, now))
+                hornet_phase = "wave"
+                message = "WAVE 1 - BEES"
+                message_until = now + 1800
+            elif hornet_phase == "wave":
+                wave_alive = any(enemy.alive and enemy is not hornet for enemy in bees)
+                if not wave_alive:
+                    health_floors = (480, 240, 0)
+                    hornet.open_damage_phase(health_floors[hornet_wave])
+                    hornet_phase = "damage"
+                    message = "HORNET EXPOSED - ATTACK!"
+                    message_until = now + 1800
+            elif hornet_phase == "damage" and hornet.health <= hornet.health_floor:
+                if hornet.health_floor == 0:
+                    game_won = True
+                    message = "YOU WIN!"
+                else:
+                    hornet.attack_locked = True
+                    hornet_wave += 1
+                    bees.extend(spawn_hornet_wave(level, hornet_wave, now))
+                    hornet_phase = "wave"
+                    wave_names = ("BEES", "CRICKETS", "FIRE ANTS")
+                    message = f"WAVE {hornet_wave + 1} - {wave_names[hornet_wave]}"
+                    message_until = now + 1800
+
+        area_clear = not any(bee.alive for bee in bees)
+        if level_index == 5 and area_clear and not merchant_spawned:
             merchant = MerchantFly((735, 370))
+            merchant_spawned = True
+        elif level.merchant_spawn_point is not None and not merchant_spawned:
+            merchant = MerchantFly(level.merchant_spawn_point)
             merchant_spawned = True
         if merchant is not None:
             merchant.update(dt)
 
+        merchant_required = level_index in (5, 8) and merchant_spawned and not merchant_visited
+        if merchant_required and level.touches_exit(player.rect):
+            message = "VISIT THE MERCHANT FIRST"
+            message_until = now + 900
+
         if (
             transition_phase is None
             and area_clear
+            and not merchant_required
             and level.touches_exit(player.rect)
             and level_index + 1 < len(LEVELS)
         ):
@@ -422,17 +606,38 @@ def main() -> None:
             level_index += 1
             if level_index % 3 == 0:
                 checkpoint_index = level_index
-            level = Level(LEVELS[level_index])
+            level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
             player.respawn(level.player_spawn)
             bees = create_bees(level)
             shrine_objects.clear()
             merchant = None
             merchant_spawned = False
+            merchant_visited = False
+            moth_restore_started_at = None
+            moth_restore_used = False
+            final_merchant_rewarded = False
+            hornet_phase = "intro" if level_index == 9 else ""
+            hornet_wave = 0
+            hornet_intro_started = now
+            hornet_intro_until = now + 3600 if hornet_phase else 0
+            game_won = False
             area_clear = False
             transition_phase = "in"
             transition_started = now
             level_title_until = now + 1700
-            message = ""
+            if level_index == 4:
+                message = "SOAKED CAVE FLOOR SNUFFS LANTERNS"
+                message_until = now + 2600
+            elif level_index == 5:
+                message = "TWO DRY PERCHES. LIGHT EACH ONE."
+                message_until = now + 2200
+            elif level_index == 6:
+                message = ""
+            elif level_index == 7:
+                message = "KEEP MOVING - THE ANT IGNITES THE PLATFORM"
+                message_until = now + 2600
+            else:
+                message = ""
         elif transition_phase == "in" and now - transition_started >= fade_duration:
             transition_phase = None
 
@@ -440,6 +645,7 @@ def main() -> None:
             player.health = 0
 
         if player.health <= 0:
+            death_reason = player.death_reason
             player.lives -= 1
             full_restart = player.lives <= 0
             if full_restart:
@@ -447,16 +653,25 @@ def main() -> None:
                 checkpoint_index = 0
                 player.coins = 0
                 player.lives = 3
-                shrine_lights = 3
+                shrine_lights = 5
                 moths = MothSwarm()
-            level = Level(LEVELS[level_index])
+                level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
+                bees = create_bees(level)
+                shrine_objects.clear()
+                merchant = None
+                merchant_spawned = False
+                merchant_visited = False
+                moth_restore_started_at = None
+                moth_restore_used = False
+                final_merchant_rewarded = False
+                hornet_phase = ""
+                hornet_wave = 0
+                hornet_intro_until = 0
+                game_won = False
             player.health = 100
+            player.death_reason = ""
             player.moth_stunned_until = 0
             player.respawn(level.player_spawn)
-            bees = create_bees(level)
-            shrine_objects.clear()
-            merchant = None
-            merchant_spawned = False
             moths.deployed = 0
             moths.attack_target = None
             moths.attack_origin = None
@@ -465,7 +680,7 @@ def main() -> None:
             transition_phase = "in"
             transition_started = now
             level_title_until = now + 1500
-            message = "RUN RESET" if full_restart else f"{player.lives} LIVES LEFT"
+            message = death_reason or ("RUN RESET" if full_restart else f"{player.lives} LIVES LEFT")
             message_until = now + 1200
         if message and message_until and now >= message_until:
             message = ""
@@ -512,6 +727,19 @@ def main() -> None:
         )
         if merchant is not None and merchant.open:
             draw_merchant(screen, font, player, moths)
+
+        if hornet_phase == "intro" and not game_won:
+            intro_progress = min(1.0, (now - hornet_intro_started) / 3600)
+            intro_veil = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            intro_veil.fill((0, 0, 0, round(205 * (1.0 - max(0.0, intro_progress - 0.72) / 0.28))))
+            screen.blit(intro_veil, (0, 0))
+            intro_line = font.render("THE FINAL HIVE FALLS SILENT", True, (185, 179, 164))
+            screen.blit(intro_line, intro_line.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 48)))
+            hornet_title = alert_font.render("HORNET", True, (250, 193, 45))
+            screen.blit(hornet_title, hornet_title.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 8)))
+
+        if game_won:
+            draw_win_screen(screen, font, alert_font)
 
         if transition_phase is not None:
             progress = min(1.0, (now - transition_started) / fade_duration)

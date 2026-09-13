@@ -18,11 +18,16 @@ FLOOR_PATHS = tuple(
     / f"{index:02d}_pixilart-sprite (19).png"
     for index in range(3)
 )
-SPIKE_HEIGHT_SCALE = 2
+GREEN_PLATFORM_PATHS = (
+    Path(__file__).resolve().parent / "assets" / "background" / "platform2.png",
+    Path(__file__).resolve().parent / "assets" / "background" / "platform2(2).png",
+    Path(__file__).resolve().parent / "assets" / "background" / "platform2(3).png",
+)
+SPIKE_RENDER_HEIGHT = TILE_SIZE + TILE_SIZE // 2
 
 
 class Level:
-    def __init__(self, grid: list[str]) -> None:
+    def __init__(self, grid: list[str], use_green_terrain: bool | None = None) -> None:
         self.grid = grid
         self.stone_rects: list[pygame.Rect] = []
         self.floor_tiles: list[tuple[pygame.Rect, int]] = []
@@ -33,6 +38,9 @@ class Level:
         self.bee_spawns: list[tuple[tuple[int, int], bool]] = []
         self.queen_spawns: list[tuple[int, int]] = []
         self.cricket_spawns: list[tuple[int, int]] = []
+        self.fire_ant_spawns: list[tuple[int, int]] = []
+        self.hornet_spawns: list[tuple[int, int]] = []
+        self.merchant_spawn_point: tuple[int, int] | None = None
         self.exit_rect: pygame.Rect | None = None
         self.player_spawn = (TILE_SIZE, TILE_SIZE)
         level_size = (len(grid[0]) * TILE_SIZE, len(grid) * TILE_SIZE)
@@ -44,12 +52,18 @@ class Level:
         self.spike_source = spike_source.subsurface(visible_bounds).copy()
         self.spike_images: dict[tuple[int, int], pygame.Surface] = {}
         self.floor_images = [self._load_floor_image(path) for path in FLOOR_PATHS]
+        self.green_platform_images = [self._load_floor_image(path) for path in GREEN_PLATFORM_PATHS]
         self._parse_grid()
+        if use_green_terrain is None:
+            use_green_terrain = bool(
+                self.cricket_spawns or self.fire_ant_spawns or self.merchant_spawn_point
+            )
+        self.platform_images = self.green_platform_images if use_green_terrain else self.floor_images
         self._find_floor_foundation()
         self.hazard_sections = self._merge_hazard_sections()
 
-        if not self.bee_spawns and not self.queen_spawns and not self.cricket_spawns:
-            raise ValueError("Level must contain at least one enemy (B, M, Q, or C)")
+        if not self.bee_spawns and not self.queen_spawns and not self.cricket_spawns and not self.fire_ant_spawns and not self.hornet_spawns and self.merchant_spawn_point is None:
+            raise ValueError("Level must contain an enemy or merchant room marker")
 
     @property
     def solids(self) -> list[pygame.Rect]:
@@ -72,8 +86,15 @@ class Level:
                         self.floor_tiles.append((tile_rect, column_index % len(self.floor_images)))
                 elif tile == "-":
                     self.platform_rects.append(tile_rect)
+                elif tile == "=":
+                    thin_height = TILE_SIZE * 5 // 8
+                    self.platform_rects.append(
+                        pygame.Rect(x, y + TILE_SIZE - thin_height, TILE_SIZE, thin_height)
+                    )
                 elif tile == "_":
-                    height = max(6, TILE_SIZE // 6)
+                    # The large cave spikes occupy much more than their thin
+                    # base strip, so their collision reaches visibly upward.
+                    height = max(18, TILE_SIZE * 5 // 8)
                     self.hazard_rects.append(
                         pygame.Rect(x, y + TILE_SIZE - height, TILE_SIZE, height)
                     )
@@ -97,6 +118,14 @@ class Level:
                 elif tile == "C":
                     position = (x + TILE_SIZE // 2, y + TILE_SIZE // 2)
                     self.cricket_spawns.append(position)
+                elif tile == "A":
+                    position = (x + TILE_SIZE // 2, y + TILE_SIZE // 2)
+                    self.fire_ant_spawns.append(position)
+                elif tile == "H":
+                    position = (x + TILE_SIZE // 2, y + TILE_SIZE // 2)
+                    self.hornet_spawns.append(position)
+                elif tile == "R":
+                    self.merchant_spawn_point = (x + TILE_SIZE // 2, y + TILE_SIZE // 2)
                 elif tile == "E":
                     if self.exit_rect is not None:
                         raise ValueError("A level may contain only one exit (E)")
@@ -179,22 +208,14 @@ class Level:
         for rect in self.floor_fill_rects:
             pygame.draw.rect(surface, FLOOR_COLOR, rect)
         for rect, variant in self.floor_tiles:
-            self._draw_brick_tile(surface, rect, variant)
+            terrain_variant = (rect.x // TILE_SIZE) % len(self.platform_images)
+            self._draw_brick_tile(surface, rect, terrain_variant, self.platform_images)
         for rect in self.platform_rects:
             pygame.draw.rect(surface, FLOOR_COLOR, rect)
-            variant = (rect.x // TILE_SIZE) % len(self.floor_images)
-            self._draw_brick_tile(surface, rect, variant)
+            variant = (rect.x // TILE_SIZE) % len(self.platform_images)
+            self._draw_brick_tile(surface, rect, variant, self.platform_images)
         for rect in self.hazard_sections:
-            spike_height = max(
-                rect.height,
-                round(
-                    rect.width
-                    * self.spike_source.get_height()
-                    / self.spike_source.get_width()
-                    * SPIKE_HEIGHT_SCALE
-                ),
-            )
-            size = (rect.width, spike_height)
+            size = (rect.width, SPIKE_RENDER_HEIGHT)
             if size not in self.spike_images:
                 self.spike_images[size] = pygame.transform.scale(self.spike_source, size)
             spike_rect = self.spike_images[size].get_rect(midbottom=rect.midbottom)
@@ -205,9 +226,13 @@ class Level:
         surface: pygame.Surface,
         rect: pygame.Rect,
         variant: int,
+        images: list[pygame.Surface] | None = None,
     ) -> None:
-        brick_image = self.floor_images[variant]
+        brick_image = (images or self.floor_images)[variant]
         available_width = brick_image.get_width() - TILE_SIZE
         source_x = (rect.x // TILE_SIZE * TILE_SIZE) % (available_width + 1)
         source = pygame.Rect(source_x, 0, TILE_SIZE, TILE_SIZE)
-        surface.blit(brick_image, rect.topleft, source)
+        tile_image = brick_image.subsurface(source)
+        if rect.size != (TILE_SIZE, TILE_SIZE):
+            tile_image = pygame.transform.scale(tile_image, rect.size)
+        surface.blit(tile_image, rect.topleft)

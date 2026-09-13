@@ -3,17 +3,21 @@
 legend:
     # stone wall/floor (solid)
     - platform (solid for now)
+    = thin cricket platform
     _ 1 (thin, non-solid placeholder)
     P player spawn
     B stationary bee placeholder
     M moving bee placeholder
     Q queen bee boss placeholder
     C cricket puzzle enemy
+    A fire ant enemy
+    R final preparation-room merchant
+    H Hornet final boss
     E level exit
       empty space
 
-Levels 1-5 currently cover bee encounters, the Queen Bee checkpoint boss,
-and the non-lethal cricket timing puzzle.
+Levels 1-7 cover bee encounters, the Queen Bee checkpoint boss, and an
+escalating one/two/three-cricket lantern challenge.
 """
 
 LEVEL_1 = [
@@ -80,11 +84,11 @@ LEVEL_5 = [
     "####################",
     "#                  #",
     "#                  #",
-    "#    C        C    #",
-    "#   ----    ----   #",
+    "#         C        #",
+    "#       ======     #",
     "#                  #",
-    "#       ----       #",
-    "#  ----      ----  #",
+    "#       ====       #",
+    "#  ====      ====  #",
     "# P               E#",
     "######        ######",
     "######________######",
@@ -94,15 +98,75 @@ LEVEL_5 = [
 LEVEL_6 = [
     "####################",
     "#                  #",
-    "#  C    C    C     #",
-    "# ---  ---  ---    #",
+    "#   C        C     #",
+    "#  ====    ====    #",
     "#                  #",
-    "#    ---  ---      #",
+    "#    ===  ===      #",
     "#                  #",
-    "#  ----      ----  #",
+    "#  ====      ====  #",
     "# P               E#",
     "######        ######",
     "######________######",
+    "####################",
+]
+
+LEVEL_7 = [
+    "####################",
+    "#                  #",
+    "#  C         C     #",
+    "# ====  ==  ====   #",
+    "#                  #",
+    "#            C     #",
+    "#  =====   =====   #",
+    "#                  #",
+    "# P               E#",
+    "#####__________#####",
+    "####################",
+    "####################",
+]
+
+LEVEL_8 = [
+    "####################",
+    "#                  #",
+    "#                  #",
+    "#                  #",
+    "#                  #",
+    "#           A      #",
+    "#      ----------  #",
+    "#                  #",
+    "# P               E#",
+    "########    ########",
+    "########____########",
+    "####################",
+]
+
+LEVEL_9 = [
+    "####################",
+    "#                  #",
+    "#                  #",
+    "#                  #",
+    "#                  #",
+    "#                  #",
+    "#             R    #",
+    "#          -----   #",
+    "# P               E#",
+    "####################",
+    "####################",
+    "####################",
+]
+
+LEVEL_10 = [
+    "####################",
+    "#                  #",
+    "#         H        #",
+    "#       ====       #",
+    "#                  #",
+    "# ====        ==== #",
+    "#                  #",
+    "#   ============   #",
+    "# P               E#",
+    "####################",
+    "####################",
     "####################",
 ]
 
@@ -113,4 +177,8 @@ LEVELS = [
     LEVEL_4,
     LEVEL_5,
     LEVEL_6,
+    LEVEL_7,
+    LEVEL_8,
+    LEVEL_9,
+    LEVEL_10,
 ]

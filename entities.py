@@ -24,6 +24,11 @@ MERCHANT_FRAME_PATHS = tuple(
 )
 MERCHANT_FRAME_DURATION_MS = 180
 CRICKET_SHEET_PATH = Path(__file__).resolve().parent / "assets" / "enemies" / "cricket" / "cricket-hop-sheet.png"
+FIRE_ANT_PATH = Path(__file__).resolve().parent / "assets" / "enemies" / "fireant" / "fireant.png"
+HORNET_FRAME_PATHS = tuple(
+    Path(__file__).resolve().parent / "assets" / "finalboss" / f"pixil-frame-{index}.png"
+    for index in range(2)
+)
 
 
 ATTACKS = {
@@ -36,7 +41,7 @@ ATTACKS = {
 ENEMY_COIN_REWARDS = {
     "Bee": 1,
     "Fire Ant": 3,
-    "Cricket": 4,
+    "Cricket": 2,
     "Queen Bee": 5,
     "Hornet": 20,
 }
@@ -103,13 +108,43 @@ class MothSwarm:
         self.deployed = min(self.deployed, self.count)
         self.positions = self.positions[: self.count]
 
+    def restore_full(self, player_position: tuple[int, int]) -> None:
+        """Restore the full swarm for the final preparation room."""
+        self.summoned = True
+        self.count = self.max_count
+        self.deployed = 0
+        self.attack_target = None
+        self.attack_origin = None
+        self.attack_tier = 0
+        self.solar_position = None
+        center = pygame.Vector2(player_position)
+        self.positions = [
+            center + pygame.Vector2(random.uniform(-70, 70), random.uniform(-45, 45))
+            for _ in range(self.count)
+        ]
+        self.wander_angles = [random.uniform(0, math.tau) for _ in range(self.count)]
+        self.wander_radii = [random.uniform(18, 52) for _ in range(self.count)]
+        self.wander_speeds = [random.uniform(0.9, 1.8) * random.choice((-1, 1)) for _ in range(self.count)]
+
     def attack(self, tier: int, enemy, now: int, paralyzed: bool) -> str:
         # Like Pokemon paralysis adapted to real time: movement continues, but an
         # attempted move has a one-in-four chance to fail.
         if paralyzed and random.random() < 0.25:
             return "PARALYZED - MOVE FAILED!"
         if enemy is None or not enemy.alive:
-            return "NO BEES LEFT"
+            return "NO ENEMIES LEFT"
+        if getattr(enemy, "attack_locked", False):
+            enemy.selected = True
+            return getattr(enemy, "locked_message", "DEFEAT THE WAVE FIRST")
+        # A cricket's chirp bends echoes around its unlit perch. Moths can be
+        # present, but cannot acquire that specific target until a lantern on
+        # its own platform breaks the echo-dark. Rejecting here also prevents
+        # an attack animation from starting.
+        if getattr(enemy, "is_cricket", False) and not getattr(enemy, "lantern_placed", False):
+            enemy.selected = True
+            enemy.revealed_until = now + 700
+            enemy.last_attack = "ECHO-DARK HIDES CRICKET"
+            return "LIGHT THIS CRICKET'S PLATFORM FIRST"
         if tier > self.unlocked_tier:
             return f"Tier {tier} is locked."
         attack = ATTACKS[tier]
@@ -234,6 +269,8 @@ class Bee:
         self.name = "BEE"
         self.is_boss = False
         self.is_cricket = False
+        self.is_fire_ant = False
+        self.is_hornet = False
         self.emits_light = True
         self.animation_frames = [self._load_frame(path) for path in BEE_FRAME_PATHS]
 
@@ -368,6 +405,167 @@ class QueenBee(Bee):
             pygame.draw.line(surface, crown_color, (x - 9, y - 20), (x + 9, y - 20), 3)
 
 
+class Hornet(Bee):
+    """Large final boss with wave-gated damage phases."""
+
+    def __init__(self, position: tuple[int, int], platform: pygame.Rect) -> None:
+        super().__init__(position, platform)
+        self.name = "HORNET"
+        self.is_boss = True
+        self.is_hornet = True
+        self.max_health = 720
+        self.health = self.max_health
+        self.rect = pygame.Rect(0, 0, 104, 68)
+        self.rect.center = position
+        self.animation_frames = [self._load_hornet_frame(path) for path in HORNET_FRAME_PATHS]
+        self.attack_locked = True
+        self.locked_message = "DEFEAT THE WAVE FIRST"
+        self.health_floor = 720
+        self.waves_complete = False
+
+    @staticmethod
+    def _load_hornet_frame(path: Path) -> pygame.Surface:
+        source = pygame.image.load(str(path)).convert_alpha()
+        bounds = source.get_bounding_rect()
+        if not bounds.width or not bounds.height:
+            raise ValueError(f"Hornet frame has no visible pixels: {path}")
+        cropped = source.subsurface(bounds).copy()
+        return pygame.transform.scale(cropped, (120, 99))
+
+    def open_damage_phase(self, health_floor: int) -> None:
+        self.health_floor = health_floor
+        self.waves_complete = health_floor == 0
+        self.attack_locked = False
+        self.last_attack = "HORNET EXPOSED!"
+
+    def take_damage(self, damage: int, now: int, stun_ms: int) -> None:
+        if self.attack_locked:
+            self.last_attack = self.locked_message
+            return
+        minimum_health = 0 if self.waves_complete else max(1, self.health_floor)
+        self.health = max(minimum_health, self.health - damage)
+        self.stunned_until = max(self.stunned_until, now + min(stun_ms, 700))
+        self.revealed_until = max(self.revealed_until, now + 2500)
+        if self.health == 0 and self.waves_complete:
+            self.alive = False
+            self.selected = False
+            self.defeated_by_player = True
+
+    def update(self, now: int, player, moths: MothSwarm, dt: float = 0.0) -> None:
+        if not self.alive or now < self.stunned_until:
+            return
+        target = pygame.Vector2(player.rect.centerx, max(145, player.rect.centery - 150))
+        delta = target - self.position
+        if delta.length() > 35:
+            self.position += delta.normalize() * 72 * dt
+            self.rect.center = (round(self.position.x), round(self.position.y))
+        if self.attack_locked or self.position.distance_to(player.rect.center) > 390:
+            return
+        if self.next_attack_at == 0:
+            self.next_attack_at = now + 1300
+        elif now >= self.next_attack_at:
+            if random.random() < 0.5:
+                player.health = max(0, player.health - 12)
+                self.last_attack = "NEEDLE VOLLEY! -12 HP"
+            else:
+                player.health = max(0, player.health - 8)
+                player.velocity.y = -380
+                self.last_attack = "HORNET DIVE! -8 HP"
+            self.next_attack_at = now + 1600
+
+    def draw(self, surface: pygame.Surface, now: int) -> None:
+        if not self.alive:
+            return
+        frame = self.animation_frames[(now // 150) % len(self.animation_frames)]
+        surface.blit(frame, frame.get_rect(center=self.position))
+        x, y = map(round, self.position)
+        if self.attack_locked:
+            pygame.draw.circle(surface, (224, 171, 47), (x, y), 65, 3)
+
+
+class FireAnt(Bee):
+    """Ground-chasing Fire Ant for Level 8."""
+
+    def __init__(self, position: tuple[int, int], platform: pygame.Rect) -> None:
+        super().__init__(position, platform)
+        self.name = "FIRE ANT"
+        self.is_fire_ant = True
+        self.emits_light = False
+        self.max_health = 85
+        self.health = self.max_health
+        self.home_platform = platform.copy()
+        self.rect = pygame.Rect(0, 0, 42, 26)
+        self.position.y = self.home_platform.top - self.rect.height // 2
+        self.rect.center = (round(self.position.x), round(self.position.y))
+        self.fire_patches: list[tuple[pygame.Rect, int]] = []
+        self.next_patch_at = 0
+        self.next_fire_damage_at = 0
+        self.drops_fire = True
+        self.tracked_target_x = self.position.x
+        self.next_retarget_at = 0
+        self.facing = 1
+        source = pygame.image.load(str(FIRE_ANT_PATH)).convert_alpha()
+        bounds = source.get_bounding_rect()
+        if not bounds.width or not bounds.height:
+            raise ValueError(f"Fire Ant image has no visible pixels: {FIRE_ANT_PATH}")
+        sprite = pygame.transform.scale(source.subsurface(bounds).copy(), (48, 41))
+        self.image_left = sprite
+        self.image_right = pygame.transform.flip(sprite, True, False)
+
+    def update(self, now: int, player, moths: MothSwarm, dt: float = 0.0) -> None:
+        if not self.alive or now < self.stunned_until:
+            return
+        if now >= self.next_retarget_at:
+            self.tracked_target_x = max(
+                self.home_platform.left + self.rect.width // 2,
+                min(self.home_platform.right - self.rect.width // 2, player.rect.centerx),
+            )
+            self.next_retarget_at = now + 850
+        target_x = self.tracked_target_x
+        direction = 1 if target_x > self.position.x else -1
+        if abs(target_x - self.position.x) > 3:
+            self.facing = direction
+            self.position.x += direction * min(abs(target_x - self.position.x), 105 * dt)
+            self.rect.centerx = round(self.position.x)
+        self.fire_patches = [(patch, expiry) for patch, expiry in self.fire_patches if now < expiry]
+        if self.drops_fire and self.next_patch_at == 0:
+            self.next_patch_at = now + 1200
+        elif self.drops_fire and now >= self.next_patch_at:
+            patch = pygame.Rect(0, 0, 38, 12)
+            patch.midbottom = (self.rect.centerx, self.home_platform.top)
+            self.fire_patches.append((patch, now + 3200))
+            self.next_patch_at = now + 2800
+        if self.drops_fire and now >= self.next_fire_damage_at and any(patch.colliderect(player.rect) for patch, _ in self.fire_patches):
+            player.fire_hits += 1
+            player.health = max(0, player.health - 34)
+            if player.fire_hits >= 3:
+                player.health = 0
+                player.death_reason = "BURNT BY FIRE!"
+            self.last_attack = f"FIRE HIT {min(player.fire_hits, 3)}/3"
+            self.next_fire_damage_at = now + 750
+        if self.rect.colliderect(player.rect) and now >= self.next_attack_at:
+            player.health = max(0, player.health - 15)
+            self.last_attack = "BURNT BY FIRE! -15 HP"
+            if player.health == 0:
+                player.death_reason = "BURNT BY FIRE!"
+            self.next_attack_at = now + 1000
+
+    def draw(self, surface: pygame.Surface, now: int) -> None:
+        if not self.alive:
+            return
+        for patch, expiry in self.fire_patches:
+            flicker = 3 + ((now // 100 + patch.x) % 3)
+            pygame.draw.ellipse(surface, (119, 35, 25), patch)
+            for flame_x in range(patch.left + 5, patch.right, 9):
+                pygame.draw.polygon(
+                    surface,
+                    (245, 112, 35),
+                    ((flame_x - 4, patch.bottom - 2), (flame_x, patch.top - flicker), (flame_x + 4, patch.bottom - 2)),
+                )
+        image = self.image_right if self.facing > 0 else self.image_left
+        surface.blit(image, image.get_rect(midbottom=self.rect.midbottom))
+
+
 class Cricket(Bee):
     """Non-lethal timing obstacle used by the Level 5 lantern puzzle."""
 
@@ -382,10 +580,11 @@ class Cricket(Bee):
         self.max_health = 80
         self.health = self.max_health
         self.home_platform = platform.copy()
-        self.rect = pygame.Rect(0, 0, 52, 34)
+        self.rect = pygame.Rect(0, 0, 46, 27)
         self.position.y = self.home_platform.top - self.rect.height // 2
         self.rect.center = (round(self.position.x), round(self.position.y))
         self.lantern_placed = False
+        self.attack_enabled = True
         self.hop_started_at = 0
         self.next_hop_at = 0
         self.hop_start_x = self.position.x
@@ -404,14 +603,14 @@ class Cricket(Bee):
         bounds = [source.get_bounding_rect() for source in sources]
         max_width = max(bound.width for bound in bounds)
         max_height = max(bound.height for bound in bounds)
-        scale = min(78 / max_width, 56 / max_height)
+        scale = min(72 / max_width, 44 / max_height)
         frames: list[pygame.Surface] = []
         for source, bound in zip(sources, bounds):
             cropped = source.subsurface(bound).copy()
             size = (max(1, round(bound.width * scale)), max(1, round(bound.height * scale)))
             sprite = pygame.transform.scale(cropped, size)
-            frame = pygame.Surface((84, 60), pygame.SRCALPHA)
-            frame.blit(sprite, sprite.get_rect(midbottom=(42, 58)))
+            frame = pygame.Surface((78, 48), pygame.SRCALPHA)
+            frame.blit(sprite, sprite.get_rect(midbottom=(39, 46)))
             frames.append(frame)
         return frames
 
@@ -459,10 +658,10 @@ class Cricket(Bee):
                 self.hop_started_at = 0
                 self.hop_progress = 0.0
 
-        if not self.is_quiet(now) and self.position.distance_to(player.rect.center) < 180 and now >= self.next_attack_at:
-            player.health = max(0, player.health - 18)
-            self.last_attack = "SONIC CHIRP! -18 HP"
-            self.next_attack_at = now + 700
+        if self.attack_enabled and not self.is_quiet(now) and self.position.distance_to(player.rect.center) < 180 and now >= self.next_attack_at:
+            player.health = max(0, player.health - 10)
+            self.last_attack = "SONIC CHIRP! -10 HP"
+            self.next_attack_at = now + 1200
 
     def draw(self, surface: pygame.Surface, now: int) -> None:
         if not self.alive:

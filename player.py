@@ -26,6 +26,8 @@ class Player:
         self.health = 100
         self.lives = 3
         self.coins = 0
+        self.death_reason = ""
+        self.fire_hits = 0
         self.moth_stunned_until = 0
         self.frames_right = [
             pygame.transform.scale(
@@ -48,6 +50,7 @@ class Player:
         self.rect.midbottom = self.spawn
         self.velocity.update(0, 0)
         self.grounded = False
+        self.fire_hits = 0
 
     def update(
         self,
