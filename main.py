@@ -163,6 +163,8 @@ def draw_win_screen(screen: pygame.Surface, font: pygame.font.Font, alert_font: 
     screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 45)))
     subtitle = font.render("THE HORNET HAS FALLEN", True, TEXT_COLOR)
     screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 5)))
+    credit = font.render("MADE BY PYDYU / ERATNAGIRI", True, (185, 179, 164))
+    screen.blit(credit, credit.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 34)))
     button = restart_button()
     pygame.draw.rect(screen, (38, 34, 48), button, border_radius=7)
     pygame.draw.rect(screen, (250, 201, 62), button, 2, border_radius=7)
