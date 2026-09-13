@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pygame
 
 from entities import ATTACKS, ENEMY_COIN_REWARDS, Bee, Cricket, FireAnt, Hornet, MerchantFly, MothSwarm, QueenBee, ShrineLight
@@ -11,7 +12,22 @@ from settings import BACKGROUND_COLOR, FPS, SCREEN_HEIGHT, SCREEN_WIDTH, TEXT_CO
 
 
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "VCR_OSD_MONO_1.001.ttf"
+SOUNDTRACK_PATH = Path(__file__).resolve().parent / "assets" / "sounds" / "ost" / "coolsong.mp3"
+BOSS_MUSIC_PATH = Path(__file__).resolve().parent / "assets" / "sounds" / "ost" / "finalboss.mp3"
+BEE_BUZZ_PATH = Path(__file__).resolve().parent / "assets" / "sounds" / "sfx" / "beebuzzing.wav"
+BEE_BUZZ_RANGE = 460
+CRICKET_CHIRP_PATH = Path(__file__).resolve().parent / "assets" / "sounds" / "sfx" / "cricketchirp.mp3"
+CRICKET_CHIRP_RANGE = 420
 MERCHANT_PRICES = {"lantern": 2, "extra_life": 6, "tier_2": 4, "tier_3": 7, "tier_4": 12}
+
+
+def play_music(path: Path, fade_ms: int = 650) -> None:
+    try:
+        pygame.mixer.music.load(str(path))
+        pygame.mixer.music.set_volume(0.45)
+        pygame.mixer.music.play(-1, fade_ms=fade_ms)
+    except pygame.error as error:
+        print(f"Music unavailable: {error}")
 
 
 def merchant_buttons() -> dict[str, pygame.Rect]:
@@ -152,6 +168,98 @@ def draw_win_screen(screen: pygame.Surface, font: pygame.font.Font, alert_font: 
     pygame.draw.rect(screen, (250, 201, 62), button, 2, border_radius=7)
     label = font.render("RESTART", True, TEXT_COLOR)
     screen.blit(label, label.get_rect(center=button.center))
+
+
+class BeeBuzzAudio:
+    """Distance, pan, and subtly slowed ambience for the nearest flying bee."""
+
+    def __init__(self) -> None:
+        self.available = False
+        try:
+            normal_sound = pygame.mixer.Sound(str(BEE_BUZZ_PATH))
+            samples = pygame.sndarray.array(normal_sound)
+            slow_length = round(len(samples) * 1.06)
+            source_positions = np.linspace(0, len(samples) - 1, slow_length)
+            lower = source_positions.astype(np.int32)
+            upper = np.minimum(lower + 1, len(samples) - 1)
+            blend = (source_positions - lower).reshape(-1, 1)
+            slowed_samples = ((1.0 - blend) * samples[lower] + blend * samples[upper]).astype(samples.dtype)
+            slow_sound = pygame.sndarray.make_sound(slowed_samples)
+            self.normal_channel = pygame.mixer.find_channel(True)
+            self.slow_channel = pygame.mixer.find_channel(True)
+            self.normal_channel.play(normal_sound, loops=-1)
+            self.slow_channel.play(slow_sound, loops=-1)
+            self.normal_channel.set_volume(0)
+            self.slow_channel.set_volume(0)
+            self.available = True
+        except (pygame.error, ValueError) as error:
+            print(f"Bee buzzing unavailable: {error}")
+
+    def update(self, player_position: tuple[int, int], enemies: list[Bee]) -> None:
+        if not self.available:
+            return
+        audible_bees = [
+            enemy for enemy in enemies
+            if enemy.alive and not enemy.is_cricket and not enemy.is_fire_ant
+        ]
+        closest = min(
+            audible_bees,
+            key=lambda enemy: enemy.position.distance_to(player_position),
+            default=None,
+        )
+        if closest is None:
+            self.normal_channel.set_volume(0)
+            self.slow_channel.set_volume(0)
+            return
+        distance = closest.position.distance_to(player_position)
+        proximity = max(0.0, 1.0 - distance / BEE_BUZZ_RANGE)
+        volume = 0.95 * (proximity ** 1.25)
+        slow_mix = min(1.0, distance / BEE_BUZZ_RANGE)
+        pan = max(-1.0, min(1.0, (closest.position.x - player_position[0]) / 320))
+        left = 1.0 - max(0.0, pan) * 0.65
+        right = 1.0 + min(0.0, pan) * 0.65
+        self.normal_channel.set_volume(volume * (1.0 - slow_mix) * left, volume * (1.0 - slow_mix) * right)
+        self.slow_channel.set_volume(volume * slow_mix * left, volume * slow_mix * right)
+
+
+class CricketChirpAudio:
+    def __init__(self) -> None:
+        self.available = False
+        self.playing = False
+        try:
+            self.sound = pygame.mixer.Sound(str(CRICKET_CHIRP_PATH))
+            self.channel = pygame.mixer.find_channel(True)
+            self.available = True
+        except pygame.error as error:
+            print(f"Cricket chirping unavailable: {error}")
+
+    def update(self, now: int, player_position: tuple[int, int], enemies: list[Bee]) -> None:
+        if not self.available:
+            return
+        chirping = [
+            enemy for enemy in enemies
+            if isinstance(enemy, Cricket) and enemy.alive and not enemy.is_quiet(now)
+        ]
+        closest = min(
+            chirping,
+            key=lambda cricket: cricket.position.distance_to(player_position),
+            default=None,
+        )
+        if closest is None:
+            if self.playing:
+                self.channel.fadeout(150)
+                self.playing = False
+            return
+        if not self.playing:
+            self.channel.play(self.sound, loops=-1, fade_ms=100)
+            self.playing = True
+        distance = closest.position.distance_to(player_position)
+        proximity = max(0.0, 1.0 - distance / CRICKET_CHIRP_RANGE)
+        volume = 0.60 * (proximity ** 1.2)
+        pan = max(-1.0, min(1.0, (closest.position.x - player_position[0]) / 320))
+        left = volume * (1.0 - max(0.0, pan) * 0.7)
+        right = volume * (1.0 + min(0.0, pan) * 0.7)
+        self.channel.set_volume(left, right)
 
 
 def draw_ui(screen: pygame.Surface, font: pygame.font.Font, alert_font: pygame.font.Font, player: Player, moths: MothSwarm, shrine_lights: int, bees: list[Bee], level_index: int, level_title_until: int, now: int, message: str) -> None:
@@ -306,19 +414,27 @@ def draw_ui(screen: pygame.Surface, font: pygame.font.Font, alert_font: pygame.f
 
 def main() -> None:
     pygame.init()
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+    except pygame.error as error:
+        print(f"Soundtrack unavailable: {error}")
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption(WINDOW_TITLE)
     clock = pygame.time.Clock()
 
 
-    # current level index variable so just search this comment to find it
-    level_index = 8
+    # search this up to find level index var
+    level_index = 9
+    play_music(BOSS_MUSIC_PATH if level_index == 9 else SOUNDTRACK_PATH, fade_ms=0)
     checkpoint_index = 0
     level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
     player = Player(level.player_spawn)
     moths = MothSwarm()
     bees = create_bees(level)
     lighting = LightingEngine((SCREEN_WIDTH, SCREEN_HEIGHT))
+    buzz_audio = BeeBuzzAudio()
+    cricket_audio = CricketChirpAudio()
     camera = Camera()
     scene = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
     shrine_objects: list[ShrineLight] = []
@@ -333,7 +449,9 @@ def main() -> None:
     hornet_intro_started = pygame.time.get_ticks()
     hornet_intro_until = hornet_intro_started + 3600 if hornet_phase else 0
     game_won = False
-    shrine_lights = 5
+    cheat_buffer = ""
+    coin_cheat_used = False
+    shrine_lights = 10
     message = ""
     message_until = 0
     font = pygame.font.Font(str(FONT_PATH), 16)
@@ -357,6 +475,7 @@ def main() -> None:
             elif event.type == pygame.MOUSEBUTTONDOWN and game_won:
                 if event.button == 1 and restart_button().collidepoint(event.pos):
                     level_index = 0
+                    play_music(SOUNDTRACK_PATH)
                     checkpoint_index = 0
                     level = Level(LEVELS[level_index], use_green_terrain=False)
                     player = Player(level.player_spawn)
@@ -369,15 +488,24 @@ def main() -> None:
                     moth_restore_started_at = None
                     moth_restore_used = False
                     final_merchant_rewarded = False
-                    shrine_lights = 5
+                    shrine_lights = 10
                     hornet_phase = ""
                     hornet_wave = 0
                     game_won = False
+                    cheat_buffer = ""
+                    coin_cheat_used = False
                     transition_phase = "in"
                     transition_started = now
                     level_title_until = 0
                     message = ""
             elif event.type == pygame.KEYDOWN:
+                if event.unicode and event.unicode.isalpha():
+                    cheat_buffer = (cheat_buffer + event.unicode.upper())[-8:]
+                    if cheat_buffer == "BUZZBUZZ" and not coin_cheat_used:
+                        player.coins += 30
+                        coin_cheat_used = True
+                        message = "SECRET SWARM CACHE! +30 COINS"
+                        message_until = now + 2200
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_SPACE:
@@ -549,6 +677,9 @@ def main() -> None:
                     living_minions += 1
                 queen.summons_pending = 0
 
+        buzz_audio.update(player.rect.center, bees)
+        cricket_audio.update(now, player.rect.center, bees)
+
         hornet = next((enemy for enemy in bees if isinstance(enemy, Hornet)), None)
         if hornet is not None and not game_won:
             if hornet_phase == "intro" and now >= hornet_intro_until:
@@ -578,7 +709,7 @@ def main() -> None:
                     message_until = now + 1800
 
         area_clear = not any(bee.alive for bee in bees)
-        if level_index == 5 and area_clear and not merchant_spawned:
+        if level_index in (2, 5) and area_clear and not merchant_spawned:
             merchant = MerchantFly((735, 370))
             merchant_spawned = True
         elif level.merchant_spawn_point is not None and not merchant_spawned:
@@ -587,7 +718,7 @@ def main() -> None:
         if merchant is not None:
             merchant.update(dt)
 
-        merchant_required = level_index in (5, 8) and merchant_spawned and not merchant_visited
+        merchant_required = level_index in (2, 5, 8) and merchant_spawned and not merchant_visited
         if merchant_required and level.touches_exit(player.rect):
             message = "VISIT THE MERCHANT FIRST"
             message_until = now + 900
@@ -604,10 +735,14 @@ def main() -> None:
 
         if transition_phase == "out" and now - transition_started >= fade_duration:
             level_index += 1
+            if level_index == 9:
+                play_music(BOSS_MUSIC_PATH)
             if level_index % 3 == 0:
                 checkpoint_index = level_index
             level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
             player.respawn(level.player_spawn)
+            if level_index in (4, 5, 6):
+                moths.dismiss()
             bees = create_bees(level)
             shrine_objects.clear()
             merchant = None
@@ -650,10 +785,11 @@ def main() -> None:
             full_restart = player.lives <= 0
             if full_restart:
                 level_index = 0
+                play_music(SOUNDTRACK_PATH)
                 checkpoint_index = 0
                 player.coins = 0
                 player.lives = 3
-                shrine_lights = 5
+                shrine_lights = 10
                 moths = MothSwarm()
                 level = Level(LEVELS[level_index], use_green_terrain=level_index >= 4)
                 bees = create_bees(level)
@@ -668,6 +804,8 @@ def main() -> None:
                 hornet_wave = 0
                 hornet_intro_until = 0
                 game_won = False
+                cheat_buffer = ""
+                coin_cheat_used = False
             player.health = 100
             player.death_reason = ""
             player.moth_stunned_until = 0

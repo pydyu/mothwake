@@ -18,6 +18,7 @@ BEE_FRAME_PATHS = tuple(
 )
 BEE_FRAME_DURATION_MS = 140
 MAX_MOTHS = 32
+LANTERN_SWARM_SIZE = 12
 MERCHANT_FRAME_PATHS = tuple(
     Path(__file__).resolve().parent / "assets" / "merchant" / f"pixil-frame-{index}.png"
     for index in range(2)
@@ -86,7 +87,7 @@ class MothSwarm:
         if self.summoned and not force:
             return
         self.summoned = True
-        self.count = 4
+        self.count = LANTERN_SWARM_SIZE
         self.deployed = 0
         self.attack_target = None
         self.attack_origin = None
@@ -94,10 +95,11 @@ class MothSwarm:
         self.solar_position = None
         _, y = player_position
         self.positions = [
-            pygame.Vector2(-30, y - 90),
-            pygame.Vector2(-70, y + 20),
-            pygame.Vector2(990, y - 60),
-            pygame.Vector2(1030, y + 35),
+            pygame.Vector2(
+                random.uniform(-90, -25) if index % 2 == 0 else random.uniform(985, 1050),
+                y + random.uniform(-120, 70),
+            )
+            for index in range(self.count)
         ]
         self.wander_angles = [random.uniform(0, math.tau) for _ in range(self.count)]
         self.wander_radii = [random.uniform(18, 38) for _ in range(self.count)]
@@ -107,6 +109,19 @@ class MothSwarm:
         self.count = max(0, self.count - amount)
         self.deployed = min(self.deployed, self.count)
         self.positions = self.positions[: self.count]
+
+    def dismiss(self) -> None:
+        self.count = 0
+        self.summoned = False
+        self.positions.clear()
+        self.wander_angles.clear()
+        self.wander_radii.clear()
+        self.wander_speeds.clear()
+        self.deployed = 0
+        self.attack_target = None
+        self.attack_origin = None
+        self.attack_tier = 0
+        self.solar_position = None
 
     def restore_full(self, player_position: tuple[int, int]) -> None:
         """Restore the full swarm for the final preparation room."""
